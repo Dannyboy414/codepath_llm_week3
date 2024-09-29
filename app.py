@@ -6,6 +6,8 @@ load_dotenv()
 # Import the function from movie_functions.py
 from movie_functions import *
 
+import random
+
 # Note: If switching to LangSmith, uncomment the following, and replace @observe with @traceable
 # from langsmith.wrappers import wrap_openai
 # from langsmith import traceable
@@ -24,10 +26,11 @@ gen_kwargs = {
 
 SYSTEM_PROMPT = """\
 You are a movie critic and you keep track of what the latest movies are.
-If a user asks for recent information, check if you already have the relevant context information. 
+If a user asks for recent information, check if you already have the relevant context information (i.e. now playing movies or showtimes for movies).
 If you do, then output the contextual information.
+If no showtimes are available for a movie, then do not output a function to call get_showtimes.
 If you do not have the context, then output a function call with the relevant inputs in the arguments.
-If you need to call a function, only output the function call. 
+If you need to fetch more information, then pick the relevant function and only output the function call. 
 Call functions using Python syntax in plain text, no code blocks.
 
 You have access to the following functions:
@@ -35,6 +38,9 @@ You have access to the following functions:
 - get_showtimes(title, location)
 - buy_ticket(theater, movie, showtime)
 - get_reviews(movie_id)
+- pick_random_movie(movies)
+
+The input for the function pick_random_movie should be a string of movies separated by ",".
 """
 
 @observe
@@ -66,27 +72,51 @@ async def on_message(message: cl.Message):
     response_message = await generate_response(client, message_history, gen_kwargs)
 
     # Check response for functions
-    if "get_now_playing_movies" in response_message.content:
-        current_movies = get_now_playing_movies()
-        message_history.append({"role": "system", "content": f"Fetched Context: {current_movies}"})
+    while any(keyword in response_message.content for keyword in [
+        'get_now_playing_movies(',
+        'get_showtimes(',
+        'buy_ticket(',
+        'get_reviews(',
+        'pick_random_movie('
+        ]):
+
+        if "get_now_playing_movies" in response_message.content:
+            current_movies = get_now_playing_movies()
+            message_history.append({"role": "system", "content": f"Fetched Context: {current_movies}"})
+        elif "get_showtimes" in response_message.content:
+            function_call = response_message.content
+            start = function_call.find('(') + 1
+            end = function_call.find(')')
+
+            # Extract the arguments substring
+            arguments = function_call[start:end]
+
+            # Split the arguments by comma and strip any whitespace
+            title, location = [arg.strip() for arg in arguments.split(',')]
+            showtimes = get_showtimes(title, location)
+            message_history.append({"role": "system", "content": f"{showtimes}"})
+        elif "buy_ticket" in response_message.content:
+            response_message.content = buy_ticket()
+            response_message.update()
+        elif "get_reviews" in response_message.content:
+            response_message.content = ""
+            response_message.update()
+        elif "pick_random_movie" in response_message.content:
+            function_call = response_message.content
+            start = function_call.find('(') + 1
+            end = function_call.find(')')
+
+            # Extract the arguments substring
+            arguments = function_call[start:end]
+            random_movie = random.choice(arguments.split(','))
+            message_history.append({"role": "system", "content": f"{random_movie}"})
+
         response_message = await generate_response(client, message_history, gen_kwargs)
-    elif "get_showtimes" in response_message.content:
-        function_call = response_message.content
-        start = function_call.find('(') + 1
-        end = function_call.find(')')
 
-        # Extract the arguments substring
-        arguments = function_call[start:end]
+    # Update message history as normal if there is no function in the latest response from the chatbot
+    message_history.append({"role": "assistant", "content": response_message.content})
 
-        # Split the arguments by comma and strip any whitespace
-        title, location = [arg.strip() for arg in arguments.split(',')]
-        showtimes = get_showtimes(title, location)
-        message_history.append({"role": "system", "content": f"Fetched Context: {showtimes}"})
-        response_message = await generate_response(client, message_history, gen_kwargs)
-    else:
-        # Update message history as normal if there is no function in the latest response from the chatbot
-        message_history.append({"role": "assistant", "content": response_message.content})
-
+    # message_history.append({"role": "assistant", "content": response_message.content})
     cl.user_session.set("message_history", message_history)
 
 if __name__ == "__main__":
