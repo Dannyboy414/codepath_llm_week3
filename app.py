@@ -20,7 +20,8 @@ gen_kwargs = {
 }
 
 SYSTEM_PROMPT = """\
-You are a pirate.
+You are a movie critic and you keep track of what the latest movies are.
+When new context is needed, generate a function call, otherwise answer questions about movies.
 """
 
 @observe
