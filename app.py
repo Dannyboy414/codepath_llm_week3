@@ -24,7 +24,9 @@ gen_kwargs = {
 
 SYSTEM_PROMPT = """\
 You are a movie critic and you keep track of what the latest movies are.
-If a user asks for recent information, output a function call and the system add to the context.
+If a user asks for recent information, check if you already have the relevant context information. 
+If you do, then output the contextual information.
+If you do not have the context, then output a function call.
 If you need to call a function, only output the function call. 
 Call functions using Python syntax in plain text, no code blocks.
 
@@ -52,11 +54,6 @@ async def generate_response(client, message_history, gen_kwargs):
             await response_message.stream_token(token)
     
     await response_message.update()
-    if "get_now_playing_movies" in response_message.content:
-        current_movies = get_now_playing_movies()
-        response_message.content = current_movies
-        await response_message.update()
-
 
     return response_message
 
@@ -68,7 +65,15 @@ async def on_message(message: cl.Message):
     
     response_message = await generate_response(client, message_history, gen_kwargs)
 
-    message_history.append({"role": "assistant", "content": response_message.content})
+    # Check response for functions
+    if "get_now_playing_movies" in response_message.content:
+        current_movies = get_now_playing_movies()
+        message_history.append({"role": "system", "content": current_movies})
+        response_message = await generate_response(client, message_history, gen_kwargs)
+    else:
+        # Update message history as normal if there is no function in the latest response from the chatbot
+        message_history.append({"role": "assistant", "content": response_message.content})
+
     cl.user_session.set("message_history", message_history)
 
 if __name__ == "__main__":
